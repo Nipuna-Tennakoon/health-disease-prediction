@@ -16,3 +16,4 @@ data/*
 # Jupyter
 .ipynb_checkpoints/
 *.pdf
+.env
