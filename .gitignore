@@ -17,3 +17,6 @@ data/*
 .ipynb_checkpoints/
 *.pdf
 .env
+
+# Weights & Biases local run files
+wandb/

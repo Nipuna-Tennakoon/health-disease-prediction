@@ -1,0 +1,76 @@
+# Configuration for 03_training.ipynb and 04_inference.ipynb. Paths are relative to the project root.
+
+experiment:
+  name: health-disease-prediction
+  version: v1
+  selection_metric: test_roc_auc   # column of the comparison table used to pick the best model
+  best_model:                      # written by 03_training.ipynb after the comparison; read by 04_inference.ipynb
+    name: random_forest
+    version: 1.0.0
+
+data:
+  cleaned_path: data/processed/Cleaned_Health_Records.csv
+  target: Has_Disease
+  drop_columns: [Patient_ID, Name, Last_Visit_Date]  # identifiers and a raw date are not model features
+  test_size: 0.2
+  random_state: 42
+
+features:
+  one_hot: [Gender, City, Medications, Diagnosis_Code, Notes, Smoker, Diabetic]
+  frequency: [Blood_Pressure]
+  ordinal: [Follow_Up]
+  scale: [Age, BMI, Heart_Rate, Cholesterol_Level]
+
+artifacts:
+  encoders_dir: artifacts/encoders
+  models_dir: artifacts/models
+  metrics_path: reports/model_comparison.csv
+
+inference:
+  synthetic_path: data/synthetic/Synthetic_Test_Data.csv
+  n_samples: 25
+
+wandb:
+  project: health-disease-prediction
+  env_file: .env
+  entity_env: WANDB_ENTITY  # variable name of the W&B team/username inside env_file; unset uses the API key's default
+  mode: online    # online | offline | disabled            
+  api_key_env: WANDB_API_KEY  # variable name of the API key inside env_file
+  dir: .                    # W&B writes its local run files to <dir>/wandb (project root, ignored by git)
+
+models:
+  random_forest:
+    version: 1.0.0
+    params:
+      n_estimators: 300
+      max_depth: 10
+      min_samples_leaf: 5
+      random_state: 42
+      n_jobs: -1
+
+  logistic_regression:
+    version: 1.0.0
+    params:
+      C: 1.0
+      max_iter: 1000
+      random_state: 42
+
+  svm:
+    version: 1.0.0
+    params:
+      C: 1.0
+      kernel: rbf
+      probability: true
+      random_state: 42
+
+  xgboost:
+    version: 1.0.0
+    params:
+      n_estimators: 300
+      max_depth: 4
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      eval_metric: logloss
+      random_state: 42
+      n_jobs: -1
