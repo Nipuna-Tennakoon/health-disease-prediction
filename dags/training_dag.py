@@ -14,7 +14,12 @@ from datetime import datetime
 
 from airflow.sdk import dag, task
 
-from health_disease_prediction.orchestration import CLEANED_DATASET, DEFAULT_ARGS, TAGS, TRAINED_MODELS
+from health_disease_prediction.orchestration import (
+    CLEANED_DATASET,
+    DEFAULT_ARGS,
+    TAGS,
+    TRAINED_MODELS,
+)
 
 
 @dag(

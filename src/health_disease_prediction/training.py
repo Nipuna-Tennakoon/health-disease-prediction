@@ -13,18 +13,29 @@ import joblib
 import numpy as np
 import pandas as pd
 import sklearn
-import wandb
 import xgboost
 from dotenv import load_dotenv
 from ruamel.yaml import YAML
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
-from health_disease_prediction.config import CONFIG_PATH, PROJECT_ROOT, artifact_paths, project_path
+import wandb
+from health_disease_prediction.config import (
+    CONFIG_PATH,
+    PROJECT_ROOT,
+    artifact_paths,
+    project_path,
+)
 from health_disease_prediction.features import fit_preprocessors, transform_features
 
 logger = logging.getLogger(__name__)
