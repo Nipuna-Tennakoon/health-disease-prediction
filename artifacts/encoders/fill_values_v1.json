@@ -1,0 +1,15 @@
+{
+  "Age": 20.0,
+  "Gender": "F",
+  "City": "New York",
+  "BMI": 23.075908729105866,
+  "Blood_Pressure": "120/80",
+  "Heart_Rate": 85.0,
+  "Cholesterol_Level": "250",
+  "Diabetic": "N",
+  "Smoker": "Ex",
+  "Medications": "none",
+  "Follow_Up": 14.0,
+  "Diagnosis_Code": "Unknown",
+  "Notes": "No Notes"
+}

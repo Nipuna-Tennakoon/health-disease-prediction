@@ -20,3 +20,10 @@ data/*
 
 # Weights & Biases local run files
 wandb/
+
+# Per-model files handed between training tasks
+artifacts/staging/
+
+# Local Airflow environment and home (see dags/README.md)
+.airflow-venv/
+.airflow/

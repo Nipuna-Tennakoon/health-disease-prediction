@@ -1,7 +1,7 @@
 [project]
 name = "health-disease-prediction"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible pipeline that predicts Has_Disease from raw patient health records"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,4 +15,19 @@ dependencies = [
     "seaborn>=0.13.2",
     "wandb>=0.30.0",
     "xgboost>=3.2.0",
+]
+
+[project.scripts]
+hdp = "health_disease_prediction.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/health_disease_prediction"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]
