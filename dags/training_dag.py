@@ -4,9 +4,10 @@ Triggered by the **cleaned_dataset** asset.
 
 1. Stratified train/test split of the cleaned dataset
 2. Fit encoders and scaler on the training split and save them as one versioned file
-3. Train every model in `config.yml` in parallel (one mapped task per model), each logged to W&B
+3. For every model in `config.yml`, in parallel (one mapped task per model): 5-fold cross-validation on the
+   training split, then a final fit on the full training split; fold scores, CV mean/std and test metrics go to W&B
 4. Bundle the models into one versioned file and save the comparison table
-5. Write the best model to `config.yml`, publishing the **trained_models** asset that triggers inference
+5. Write the best model (highest CV mean) to `config.yml`, publishing the **trained_models** asset that triggers inference
 """
 
 from datetime import datetime

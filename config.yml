@@ -4,9 +4,9 @@
 experiment:
   name: health-disease-prediction
   version: v1
-  selection_metric: test_roc_auc   # column of the comparison table used to pick the best model
+  selection_metric: cv_roc_auc_mean   # column of the comparison table used to pick the best model (CV mean, not test)
   best_model:                      # written by training after the comparison; read by inference
-    name: random_forest
+    name: xgboost
     version: 1.0.1
 
 data:
@@ -26,10 +26,13 @@ features:
   ordinal: [Follow_Up]
   scale: [Age, BMI, Heart_Rate, Cholesterol_Level]
 
+cv:
+  n_splits: 5      # stratified k-fold on the training split only; the test set is used once, at the end
+
 artifacts:
   encoders_dir: artifacts/encoders
   models_dir: artifacts/models
-  staging_dir: artifacts/staging       # per-model files from parallel training tasks, bundled afterwards
+  staging_dir: artifacts/metrics       # per-model files from parallel training tasks, bundled afterwards
   metrics_path: reports/model_comparison.csv
 
 inference:

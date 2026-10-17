@@ -1,4 +1,4 @@
-"""Split, encode, train, compare and select models (same logic as 03_training.ipynb).
+"""Split, encode, cross-validate, train, compare and select models (same logic as 03_training.ipynb).
 
 Each public function is one pipeline step that reads its inputs from disk and writes its outputs
 to disk, so steps can run in separate processes (Airflow tasks) or in sequence via run_training.
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 import sklearn
 import wandb
@@ -19,7 +20,7 @@ from ruamel.yaml import YAML
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
@@ -98,6 +99,50 @@ def evaluate(model, X: pd.DataFrame, y: pd.Series) -> dict:
     }
 
 
+def cross_validate(
+    model_name: str, params: dict, X: pd.DataFrame, y: pd.Series, features: dict, n_splits: int, random_state: int
+) -> list[dict]:
+    """Stratified k-fold on the training split only; the test set is never touched here.
+
+    Encoders and scaler are refitted inside every fold on that fold's training part, so the
+    held-out fold is as unseen as real new data would be.
+    """
+    folds = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    fold_metrics = []
+    for fit_idx, val_idx in folds.split(X, y):
+        X_fit, X_val = X.iloc[fit_idx], X.iloc[val_idx]
+        y_fit, y_val = y.iloc[fit_idx], y.iloc[val_idx]
+
+        fold_preprocessors = fit_preprocessors(X_fit, features)
+        model = MODEL_CLASSES[model_name](**params)
+        model.fit(transform_features(X_fit, fold_preprocessors, features), y_fit)
+        fold_metrics.append(evaluate(model, transform_features(X_val, fold_preprocessors, features), y_val))
+    return fold_metrics
+
+
+def summarize_folds(fold_metrics: list[dict]) -> dict:
+    """Mean and standard deviation of each metric across folds."""
+    summary = {}
+    for metric in fold_metrics[0]:
+        values = [fold[metric] for fold in fold_metrics]
+        summary[f"{metric}_mean"] = float(np.mean(values))
+        summary[f"{metric}_std"] = float(np.std(values))
+    return summary
+
+
+def log_folds(run, fold_metrics: list[dict], cv_summary: dict) -> None:
+    """Per-fold scores as a chart and a table, plus mean/std in the run summary for comparing models."""
+    run.define_metric("fold")
+    run.define_metric("cv/*", step_metric="fold")
+    fold_table = wandb.Table(columns=["fold", *fold_metrics[0]])
+    for fold, metrics in enumerate(fold_metrics, start=1):
+        run.log({"fold": fold, **{f"cv/{k}": v for k, v in metrics.items()}})
+        fold_table.add_data(fold, *metrics.values())
+    run.log({"cv/folds": fold_table})
+    for key, value in cv_summary.items():
+        run.summary[f"cv/{key}"] = value
+
+
 def wandb_settings(cfg: dict) -> dict:
     """Shared W&B settings; the API key and team come from .env, never from code or config."""
     load_dotenv(PROJECT_ROOT / cfg["wandb"]["env_file"])
@@ -116,7 +161,7 @@ def wandb_settings(cfg: dict) -> dict:
 
 
 def train_model(cfg: dict, model_name: str) -> dict:
-    """Train one model, log train/test metrics to W&B and stage the fitted model for bundling."""
+    """Cross-validate one model, refit it on the full training split, log everything to W&B and stage it."""
     spec = cfg["models"][model_name]
     features = cfg["features"]
     preprocessors = joblib.load(artifact_paths(cfg)["preprocessors"])
@@ -126,6 +171,14 @@ def train_model(cfg: dict, model_name: str) -> dict:
     X_train_enc = transform_features(X_train, preprocessors, features)
     X_test_enc = transform_features(X_test, preprocessors, features)
 
+    # Cross-validation estimates how good and how stable the model is; it drives model selection
+    fold_metrics = cross_validate(
+        model_name, spec["params"], X_train, y_train, features,
+        n_splits=cfg["cv"]["n_splits"], random_state=cfg["data"]["random_state"],
+    )
+    cv_summary = summarize_folds(fold_metrics)
+
+    # Final model is refitted on the whole training split; the test set is scored once, for reporting
     model = MODEL_CLASSES[model_name](**spec["params"])
     model.fit(X_train_enc, y_train)
     train_metrics = evaluate(model, X_train_enc, y_train)
@@ -144,6 +197,7 @@ def train_model(cfg: dict, model_name: str) -> dict:
             "n_encoded_features": X_train_enc.shape[1],
             "train_rows": len(X_train_enc),
             "test_rows": len(X_test_enc),
+            "cv_folds": cfg["cv"]["n_splits"],
             "sklearn_version": sklearn.__version__,
             "xgboost_version": xgboost.__version__,
         },
@@ -157,11 +211,13 @@ def train_model(cfg: dict, model_name: str) -> dict:
             class_names=["no disease", "disease"],
         ),
     })
+    log_folds(run, fold_metrics, cv_summary)
     run.finish()
 
     result = {
         "model": model_name,
         "version": spec["version"],
+        **{f"cv_{k}": v for k, v in cv_summary.items()},
         **{f"train_{k}": v for k, v in train_metrics.items()},
         **{f"test_{k}": v for k, v in test_metrics.items()},
     }
@@ -169,7 +225,10 @@ def train_model(cfg: dict, model_name: str) -> dict:
     paths["model"].parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"version": spec["version"], "model": model}, paths["model"])
     paths["metrics"].write_text(json.dumps(result, indent=2))
-    logger.info("%s: test accuracy %.3f, test ROC-AUC %.3f", model_name, test_metrics["accuracy"], test_metrics["roc_auc"])
+    logger.info(
+        "%s: CV ROC-AUC %.3f ± %.3f, test ROC-AUC %.3f",
+        model_name, cv_summary["roc_auc_mean"], cv_summary["roc_auc_std"], test_metrics["roc_auc"],
+    )
     return result
 
 

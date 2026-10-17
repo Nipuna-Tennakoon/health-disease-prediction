@@ -1,26 +1,26 @@
 Patient_ID,predicted_class,probability_disease,predicted_label
-ID-S001,1,0.55,disease
-ID-S002,1,0.503,disease
-ID-S003,1,0.509,disease
-ID-S004,0,0.431,no disease
-ID-S005,1,0.581,disease
-ID-S006,1,0.517,disease
-ID-S007,1,0.558,disease
-ID-S008,1,0.529,disease
-ID-S009,1,0.581,disease
-ID-S010,0,0.454,no disease
-ID-S011,0,0.484,no disease
-ID-S012,1,0.573,disease
-ID-S013,0,0.417,no disease
-ID-S014,1,0.509,disease
-ID-S015,0,0.384,no disease
-ID-S016,0,0.453,no disease
-ID-S017,0,0.494,no disease
-ID-S018,0,0.498,no disease
-ID-S019,0,0.483,no disease
-ID-S020,1,0.515,disease
-ID-S021,0,0.491,no disease
-ID-S022,1,0.59,disease
-ID-S023,0,0.487,no disease
-ID-S024,0,0.424,no disease
-ID-S025,0,0.358,no disease
+ID-S001,1,0.779,disease
+ID-S002,1,0.669,disease
+ID-S003,1,0.545,disease
+ID-S004,0,0.308,no disease
+ID-S005,1,0.548,disease
+ID-S006,1,0.512,disease
+ID-S007,0,0.498,no disease
+ID-S008,1,0.544,disease
+ID-S009,1,0.597,disease
+ID-S010,0,0.313,no disease
+ID-S011,0,0.466,no disease
+ID-S012,1,0.789,disease
+ID-S013,0,0.386,no disease
+ID-S014,1,0.716,disease
+ID-S015,0,0.103,no disease
+ID-S016,0,0.472,no disease
+ID-S017,0,0.438,no disease
+ID-S018,0,0.491,no disease
+ID-S019,0,0.393,no disease
+ID-S020,1,0.647,disease
+ID-S021,1,0.597,disease
+ID-S022,1,0.65,disease
+ID-S023,0,0.469,no disease
+ID-S024,0,0.366,no disease
+ID-S025,0,0.215,no disease
