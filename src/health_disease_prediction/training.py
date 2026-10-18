@@ -16,6 +16,7 @@ import sklearn
 import xgboost
 from dotenv import load_dotenv
 from ruamel.yaml import YAML
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -25,7 +26,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import RepeatedStratifiedKFold, train_test_split
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
@@ -36,6 +37,7 @@ from health_disease_prediction.config import (
     artifact_paths,
     project_path,
 )
+from health_disease_prediction.evaluation import pairwise_comparison, select_model
 from health_disease_prediction.features import fit_preprocessors, transform_features
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,10 @@ MODEL_CLASSES = {
     "logistic_regression": LogisticRegression,
     "svm": SVC,
     "xgboost": XGBClassifier,
+    # No-skill reference: predicts class frequencies only, so it scores ROC-AUC 0.5 on every fold
+    "baseline": DummyClassifier,
 }
+BASELINE = "baseline"
 
 
 def _split_paths(cfg: dict) -> dict:
@@ -55,7 +60,11 @@ def _split_paths(cfg: dict) -> dict:
 
 def _staging_paths(cfg: dict, model_name: str) -> dict:
     staging_dir = project_path(cfg["artifacts"]["staging_dir"])
-    return {"model": staging_dir / f"{model_name}.joblib", "metrics": staging_dir / f"{model_name}_metrics.json"}
+    return {
+        "model": staging_dir / f"{model_name}.joblib",
+        "metrics": staging_dir / f"{model_name}_metrics.json",
+        "folds": staging_dir / f"{model_name}_folds.json",
+    }
 
 
 def load_split(cfg: dict, split: str) -> tuple[pd.DataFrame, pd.Series]:
@@ -111,14 +120,23 @@ def evaluate(model, X: pd.DataFrame, y: pd.Series) -> dict:
 
 
 def cross_validate(
-    model_name: str, params: dict, X: pd.DataFrame, y: pd.Series, features: dict, n_splits: int, random_state: int
+    model_name: str,
+    params: dict,
+    X: pd.DataFrame,
+    y: pd.Series,
+    features: dict,
+    n_splits: int,
+    random_state: int,
+    n_repeats: int = 1,
 ) -> list[dict]:
-    """Stratified k-fold on the training split only; the test set is never touched here.
+    """Repeated stratified k-fold on the training split only; the test set is never touched here.
 
-    Encoders and scaler are refitted inside every fold on that fold's training part, so the
-    held-out fold is as unseen as real new data would be.
+    Each repeat reshuffles the rows into new folds. The fixed seed gives every model exactly the same
+    folds, so their scores can be compared fold by fold. Encoders and scaler are refitted inside every
+    fold on that fold's training part, so the held-out fold is as unseen as real new data would be.
+    Scores are returned in order: repeat 1 folds 1..k, repeat 2 folds 1..k, ...
     """
-    folds = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    folds = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
     fold_metrics = []
     for fit_idx, val_idx in folds.split(X, y):
         X_fit, X_val = X.iloc[fit_idx], X.iloc[val_idx]
@@ -141,14 +159,20 @@ def summarize_folds(fold_metrics: list[dict]) -> dict:
     return summary
 
 
-def log_folds(run, fold_metrics: list[dict], cv_summary: dict) -> None:
+def fold_positions(n_scores: int, n_splits: int) -> list[tuple[int, int]]:
+    """(repeat, fold) number of each score, in the order cross_validate returns them."""
+    return [(i // n_splits + 1, i % n_splits + 1) for i in range(n_scores)]
+
+
+def log_folds(run, fold_metrics: list[dict], cv_summary: dict, n_splits: int) -> None:
     """Per-fold scores as a chart and a table, plus mean/std in the run summary for comparing models."""
-    run.define_metric("fold")
-    run.define_metric("cv/*", step_metric="fold")
-    fold_table = wandb.Table(columns=["fold", *fold_metrics[0]])
-    for fold, metrics in enumerate(fold_metrics, start=1):
-        run.log({"fold": fold, **{f"cv/{k}": v for k, v in metrics.items()}})
-        fold_table.add_data(fold, *metrics.values())
+    run.define_metric("split")
+    run.define_metric("cv/*", step_metric="split")
+    fold_table = wandb.Table(columns=["repeat", "fold", *fold_metrics[0]])
+    positions = fold_positions(len(fold_metrics), n_splits)
+    for split, (metrics, (repeat, fold)) in enumerate(zip(fold_metrics, positions), start=1):
+        run.log({"split": split, **{f"cv/{k}": v for k, v in metrics.items()}})
+        fold_table.add_data(repeat, fold, *metrics.values())
     run.log({"cv/folds": fold_table})
     for key, value in cv_summary.items():
         run.summary[f"cv/{key}"] = value
@@ -182,10 +206,10 @@ def train_model(cfg: dict, model_name: str) -> dict:
     X_train_enc = transform_features(X_train, preprocessors, features)
     X_test_enc = transform_features(X_test, preprocessors, features)
 
-    # Cross-validation estimates how good and how stable the model is; it drives model selection
+    # Repeated cross-validation estimates how good and how stable the model is; it drives model selection
     fold_metrics = cross_validate(
         model_name, spec["params"], X_train, y_train, features,
-        n_splits=cfg["cv"]["n_splits"], random_state=cfg["data"]["random_state"],
+        n_splits=cfg["cv"]["n_splits"], random_state=cfg["data"]["random_state"], n_repeats=cfg["cv"]["n_repeats"],
     )
     cv_summary = summarize_folds(fold_metrics)
 
@@ -209,6 +233,7 @@ def train_model(cfg: dict, model_name: str) -> dict:
             "train_rows": len(X_train_enc),
             "test_rows": len(X_test_enc),
             "cv_folds": cfg["cv"]["n_splits"],
+            "cv_repeats": cfg["cv"]["n_repeats"],
             "sklearn_version": sklearn.__version__,
             "xgboost_version": xgboost.__version__,
         },
@@ -222,7 +247,7 @@ def train_model(cfg: dict, model_name: str) -> dict:
             class_names=["no disease", "disease"],
         ),
     })
-    log_folds(run, fold_metrics, cv_summary)
+    log_folds(run, fold_metrics, cv_summary, cfg["cv"]["n_splits"])
     run.finish()
 
     result = {
@@ -236,6 +261,8 @@ def train_model(cfg: dict, model_name: str) -> dict:
     paths["model"].parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"version": spec["version"], "model": model}, paths["model"])
     paths["metrics"].write_text(json.dumps(result, indent=2))
+    # Per-fold scores are kept for the statistical comparison, which needs every model's scores on the same folds
+    paths["folds"].write_text(json.dumps(fold_metrics, indent=2))
     logger.info(
         "%s: CV ROC-AUC %.3f ± %.3f, test ROC-AUC %.3f",
         model_name, cv_summary["roc_auc_mean"], cv_summary["roc_auc_std"], test_metrics["roc_auc"],
@@ -273,22 +300,84 @@ def package_models(cfg: dict) -> pd.DataFrame:
     return comparison
 
 
+def compare_models(cfg: dict) -> pd.DataFrame:
+    """Test every pair of models (and a no-skill baseline) for a real difference in their CV scores.
+
+    The baseline is cross-validated on the same folds as the models. Pairs are compared with the
+    corrected resampled t-test and Holm-adjusted p-values; the fold scores and the significance
+    table are saved to reports/ and logged to W&B.
+    """
+    n_splits = cfg["cv"]["n_splits"]
+    metric = cfg["selection"]["metric"]
+    fold_metrics = {name: json.loads(_staging_paths(cfg, name)["folds"].read_text()) for name in cfg["models"]}
+
+    X_train, y_train = load_split(cfg, "train")
+    fold_metrics[BASELINE] = cross_validate(
+        BASELINE, {"strategy": cfg["selection"]["baseline_strategy"]}, X_train, y_train, cfg["features"],
+        n_splits=n_splits, random_state=cfg["data"]["random_state"], n_repeats=cfg["cv"]["n_repeats"],
+    )
+
+    fold_scores = pd.DataFrame([
+        {"model": name, "repeat": repeat, "fold": fold, **scores}
+        for name, folds in fold_metrics.items()
+        for scores, (repeat, fold) in zip(folds, fold_positions(len(folds), n_splits))
+    ])
+    # Held-out fold vs training part size: 1/(k-1), the overlap correction in the t-test
+    significance = pairwise_comparison(
+        {name: [fold[metric] for fold in folds] for name, folds in fold_metrics.items()},
+        test_train_ratio=1 / (n_splits - 1),
+        alpha=cfg["selection"]["alpha"],
+    )
+
+    fold_scores_path = project_path(cfg["artifacts"]["fold_scores_path"])
+    significance_path = project_path(cfg["artifacts"]["significance_path"])
+    fold_scores_path.parent.mkdir(parents=True, exist_ok=True)
+    fold_scores.round(4).to_csv(fold_scores_path, index=False)
+    significance.round(4).to_csv(significance_path, index=False)
+
+    version = cfg["experiment"]["version"]
+    run = wandb.init(**wandb_settings(cfg), name=f"comparison-{version}", job_type="evaluate",
+                     config={"metric": metric, "alpha": cfg["selection"]["alpha"],
+                             "cv_folds": n_splits, "cv_repeats": cfg["cv"]["n_repeats"]})
+    run.log({"comparison/significance": wandb.Table(dataframe=significance.round(4)),
+             "comparison/fold_scores": wandb.Table(dataframe=fold_scores.round(4))})
+    run.finish()
+
+    logger.info("Compared %d models on %d folds: %d of %d pairs significant after Holm correction",
+                len(fold_metrics), len(fold_scores) // len(fold_metrics),
+                int(significance["significant"].sum()), len(significance))
+    return significance
+
+
 def select_best_model(cfg: dict, config_path: Path = CONFIG_PATH) -> dict:
-    """Pick the model with the highest selection metric and record it in config.yml for inference."""
+    """Apply the statistical selection rule and record the chosen model in config.yml for inference."""
+    metric = cfg["selection"]["metric"]
+    fold_scores = pd.read_csv(project_path(cfg["artifacts"]["fold_scores_path"]))
+    significance = pd.read_csv(project_path(cfg["artifacts"]["significance_path"]))
     comparison = pd.read_csv(project_path(cfg["artifacts"]["metrics_path"]), index_col="model")
-    metric = cfg["experiment"]["selection_metric"]
-    best_name = comparison[metric].idxmax()
-    best = {"name": best_name, "version": str(comparison.loc[best_name, "version"])}
+
+    means = fold_scores.groupby("model")[metric].mean().to_dict()
+    decision = select_model(means, significance, BASELINE, cfg["selection"]["simplicity_order"])
+    best = {
+        "name": decision["name"],
+        "version": str(comparison.loc[decision["name"], "version"]),
+        "significant": decision["significant"],
+    }
 
     # Round-trip YAML keeps the comments and key order of config.yml when writing it back
     yaml_rt = YAML()
     config_doc = yaml_rt.load(config_path)
-    config_doc["experiment"]["best_model"]["name"] = best["name"]
-    config_doc["experiment"]["best_model"]["version"] = best["version"]
+    for key, value in best.items():
+        config_doc["experiment"]["best_model"][key] = value
     yaml_rt.dump(config_doc, config_path)
 
-    logger.info("Best model by %s: %s v%s (%.4f)", metric, best["name"], best["version"], comparison.loc[best_name, metric])
-    return best
+    if decision["significant"]:
+        logger.info("Selected %s v%s: beats the baseline significantly; tied with top model: %s",
+                    best["name"], best["version"], decision["tied_with_top"])
+    else:
+        logger.warning("No model beats the no-skill baseline significantly; selected the simplest equivalent model "
+                       "%s v%s (top by mean: %s)", best["name"], best["version"], decision["top_by_mean"])
+    return {**best, "top_by_mean": decision["top_by_mean"], "tied_with_top": decision["tied_with_top"]}
 
 
 def run_training(cfg: dict, config_path: Path = CONFIG_PATH) -> dict:
@@ -298,4 +387,5 @@ def run_training(cfg: dict, config_path: Path = CONFIG_PATH) -> dict:
     for model_name in cfg["models"]:
         train_model(cfg, model_name)
     package_models(cfg)
+    compare_models(cfg)
     return select_best_model(cfg, config_path)

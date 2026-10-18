@@ -4,10 +4,10 @@
 experiment:
   name: health-disease-prediction
   version: v1
-  selection_metric: cv_roc_auc_mean   # column of the comparison table used to pick the best model (CV mean, not test)
   best_model:                      # written by training after the comparison; read by inference
-    name: xgboost
-    version: 1.0.1
+    name: random_forest
+    version: 1.0.0
+    significant: false             # true only if the selected model beats the no-skill baseline significantly
 
 data:
   raw_url: 
@@ -28,12 +28,21 @@ features:
 
 cv:
   n_splits: 5      # stratified k-fold on the training split only; the test set is used once, at the end
+  n_repeats: 5     # reshuffle and repeat the k-fold: 25 scores per model, identical folds for every model
+
+selection:
+  metric: roc_auc                # fold metric compared by the statistical tests
+  alpha: 0.05                    # significance level after the Holm correction for multiple comparisons
+  baseline_strategy: prior       # DummyClassifier strategy for the no-skill baseline
+  simplicity_order: [logistic_regression, random_forest, xgboost, svm]  # tie-break: simplest model among equivalent ones
 
 artifacts:
   encoders_dir: artifacts/encoders
   models_dir: artifacts/models
   staging_dir: artifacts/metrics       # per-model files from parallel training tasks, bundled afterwards
   metrics_path: reports/model_comparison.csv
+  fold_scores_path: reports/cv_fold_scores.csv           # every model's score on every CV fold
+  significance_path: reports/model_significance.csv     # pairwise corrected t-tests with Holm-adjusted p-values
 
 inference:
   synthetic_path: data/synthetic/Synthetic_Test_Data.csv
@@ -50,23 +59,23 @@ wandb:
 
 models:
   random_forest:
-    version: 1.0.1
+    version: 1.0.0
     params:
-      n_estimators: 350
-      max_depth: 15
+      n_estimators: 300
+      max_depth: 5
       min_samples_leaf: 5
       random_state: 42
       n_jobs: -1
 
   logistic_regression:
-    version: 1.0.1
+    version: 1.0.0
     params:
       C: 1.0
       max_iter: 500
       random_state: 42
 
   svm:
-    version: 1.0.1
+    version: 1.0.0
     params:
       C: 1.0
       kernel: rbf
@@ -74,9 +83,9 @@ models:
       random_state: 42
 
   xgboost:
-    version: 1.0.1
+    version: 1.0.0
     params:
-      n_estimators: 350
+      n_estimators: 300
       max_depth: 5
       learning_rate: 0.05
       subsample: 0.8

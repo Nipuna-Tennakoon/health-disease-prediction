@@ -4,10 +4,14 @@ Triggered by the **cleaned_dataset** asset.
 
 1. Stratified train/test split of the cleaned dataset
 2. Fit encoders and scaler on the training split and save them as one versioned file
-3. For every model in `config.yml`, in parallel (one mapped task per model): 5-fold cross-validation on the
-   training split, then a final fit on the full training split; fold scores, CV mean/std and test metrics go to W&B
+3. For every model in `config.yml`, in parallel (one mapped task per model): repeated stratified 5-fold
+   cross-validation (5 x 5 = 25 folds) on the training split, then a final fit on the full training split;
+   fold scores, CV mean/std and test metrics go to W&B
 4. Bundle the models into one versioned file and save the comparison table
-5. Write the best model (highest CV mean) to `config.yml`, publishing the **trained_models** asset that triggers inference
+5. Compare all models and a no-skill baseline on the same folds: corrected resampled t-test for every pair,
+   Holm-adjusted p-values, saved to `reports/model_significance.csv`
+6. Select the simplest model among those statistically tied with the best (only declared significant if it beats
+   the baseline), write it to `config.yml` and publish the **trained_models** asset that triggers inference
 """
 
 from datetime import datetime
@@ -69,6 +73,13 @@ def health_training():
 
         package_models(load_config())
 
+    @task
+    def compare_models() -> None:
+        from health_disease_prediction.config import load_config
+        from health_disease_prediction.training import compare_models
+
+        compare_models(load_config())
+
     @task(outlets=[TRAINED_MODELS])
     def select_best_model() -> dict:
         from health_disease_prediction.config import load_config
@@ -77,7 +88,7 @@ def health_training():
         return select_best_model(load_config())
 
     trained = train_model.expand(model_name=list_models())
-    split_dataset() >> fit_preprocessors() >> trained >> package_models() >> select_best_model()
+    split_dataset() >> fit_preprocessors() >> trained >> package_models() >> compare_models() >> select_best_model()
 
 
 health_training()

@@ -5,7 +5,7 @@ Three DAGs, one per pipeline operation. Each task calls a function from the `hea
 | DAG | Trigger | Tasks |
 |---|---|---|
 | `health_preprocessing` | Manual | `download_raw_data` → `clean_dataset` → `validate_cleaned_data` |
-| `health_training` | `cleaned_dataset` asset | `split_dataset` → `fit_preprocessors` → `train_model` (one mapped task per model, in parallel) → `package_models` → `select_best_model` |
+| `health_training` | `cleaned_dataset` asset | `split_dataset` → `fit_preprocessors` → `train_model` (one mapped task per model, in parallel, repeated 5×5 CV) → `package_models` → `compare_models` (corrected t-tests vs baseline) → `select_best_model` |
 | `health_inference` | `trained_models` asset | `generate_synthetic_data` → `predict` |
 
 Assets chain the DAGs: a successful preprocessing run triggers training, and a new best model triggers inference.

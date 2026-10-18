@@ -34,6 +34,20 @@ def test_cross_validate_returns_one_score_set_per_fold(data):
     assert set(folds[0]) == {"accuracy", "precision", "recall", "f1", "roc_auc"}
 
 
+def test_repeated_cross_validation_returns_folds_times_repeats(data):
+    X, y = data
+    folds = cross_validate(
+        "logistic_regression", {"max_iter": 200}, X, y, FEATURES, n_splits=5, random_state=42, n_repeats=3
+    )
+    assert len(folds) == 15
+
+
+def test_baseline_has_no_skill(data):
+    X, y = data
+    folds = cross_validate("baseline", {"strategy": "prior"}, X, y, FEATURES, n_splits=5, random_state=42, n_repeats=2)
+    assert all(fold["roc_auc"] == 0.5 for fold in folds)
+
+
 def test_cross_validate_is_reproducible(data):
     X, y = data
     run = lambda: cross_validate("random_forest", {"n_estimators": 10, "random_state": 0}, X, y, FEATURES, 5, 42)
