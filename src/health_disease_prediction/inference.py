@@ -71,15 +71,24 @@ def load_best_model(cfg: dict):
     return models[name]["model"]
 
 
-def predict(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+def load_artifacts(cfg: dict) -> dict:
+    """Load fill values, encoders and the best model once, so repeated predictions (e.g. the demo app) reuse them."""
+    paths = artifact_paths(cfg)
+    return {
+        "fill_values": load_fill_values(paths["fill_values"]),
+        "preprocessors": joblib.load(paths["preprocessors"]),
+        "model": load_best_model(cfg),
+    }
+
+
+def predict(df: pd.DataFrame, cfg: dict, artifacts: dict | None = None) -> pd.DataFrame:
     """Raw records -> predicted class and probability of disease."""
     validate_input(df)
-    paths = artifact_paths(cfg)
-    clean = preprocess_for_inference(df, load_fill_values(paths["fill_values"]))
+    artifacts = artifacts or load_artifacts(cfg)
+    clean = preprocess_for_inference(df, artifacts["fill_values"])
 
-    preprocessors = joblib.load(paths["preprocessors"])
-    X_enc = transform_features(clean, preprocessors, cfg["features"])
-    model = load_best_model(cfg)
+    X_enc = transform_features(clean, artifacts["preprocessors"], cfg["features"])
+    model = artifacts["model"]
 
     predictions = pd.DataFrame({
         "Patient_ID": clean["Patient_ID"],

@@ -29,6 +29,9 @@ build-backend = "hatchling.build"
 packages = ["src/health_disease_prediction"]
 
 [dependency-groups]
+app = [
+    "streamlit>=1.65.0",
+]
 dev = [
     "pytest>=9.1.1",
 ]
